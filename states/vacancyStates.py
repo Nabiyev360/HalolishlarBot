@@ -9,3 +9,5 @@ class VacSt(StatesGroup):
     input_salary = State()
     input_contact = State()
     confirm_cancel = State()
+
+    input_chek = State()

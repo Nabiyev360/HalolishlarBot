@@ -7,6 +7,9 @@ main_menu = ReplyKeyboardMarkup(resize_keyboard=True,
 			KeyboardButton('📢 Vakansiya joylashtirish')
 		],
 		[
+			KeyboardButton('🛠 Xizmatlar joylashtirish')
+		],
+		[
 			KeyboardButton('📄 Rezyume joylashtirish')
 		],
 		[

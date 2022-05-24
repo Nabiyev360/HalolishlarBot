@@ -15,3 +15,5 @@ class ResSt(StatesGroup):
     input_additional = State()
     input_portfolio = State()
     confirm_cancel = State()
+
+    input_chek = State()

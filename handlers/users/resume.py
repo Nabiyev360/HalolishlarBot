@@ -1,9 +1,12 @@
+from pyqiwip2p import QiwiP2P
+from random import randint
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from asyncio import sleep
 
-from loader import dp
-from data.config import ADMINS
+from loader import dp, db
+from data.admins_list import ADMINS
+from keyboards.inline.advKeyboards import check_pay
 from keyboards.default.buttons import cancel_btn, confrim_btn
 from keyboards.default.mainMenu import main_menu
 from keyboards.inline.confirmAdmin import confirm_admin
@@ -12,10 +15,41 @@ from states.resumeStates import ResSt
 
 @dp.message_handler(text = '📄 Rezyume joylashtirish')
 async def resume_handler(message: types.Message, state: FSMContext):
-    await message.answer(
-        text = "1. Familiya, ism va sharfingizni kiriting.", 
-        reply_markup=cancel_btn)
+    res = db.check_interval(message.from_user.id)
+    if res == True:
+        ann_price = db.get_one('ann_price')
+        ann_price_uzs = db.get_one('ann_price_uzs')
+        if ann_price != '0':
+            txt = f"@Halolishlar kanaliga e'lon joylashtirish narxi {ann_price_uzs} so'm ({ann_price} RUB). To'lovni amalga oshirganingizdan so'ng rezyume joylashingiz mumkin."
+            QIWI_TOKEN =  db.get_one('qiwi_wallet')
+            p2p = QiwiP2P(auth_key=QIWI_TOKEN)
+            comment = str(message.from_user.id) + '_' + message.from_user.full_name + '_' + str(randint(1, 9999))
+            bill = p2p.bill(amount=int(ann_price), lifetime=10, comment=comment)        
+            await message.answer(text=txt, reply_markup=check_pay(bill.pay_url, bill.bill_id, ann_price_uzs, category='res'))
+        else:
+            await message.answer(
+                text = "1. Familiya, ism va sharfingizni kiriting.", 
+                reply_markup=cancel_btn)
+            await ResSt.input_name.set()
+    else:
+        interval, left_days = res
+        await message.answer(f"Kanalga e'lon joylashtirish vaqti oralig'i {interval} kun. \nSiz {left_days} kundan so'ng yana e'lon joylashtirishingiz mumkin 💁‍♂️")
+
+
+@dp.message_handler(state=ResSt.input_chek, content_types='any')
+async def screen_handler(msg: types.Message, state:FSMContext):
+    await msg.answer("✅ Chek adming yuborildi.", reply_markup=cancel_btn)
+    await msg.answer(text = "1. Familiya, ism va sharfingizni kiriting.")
     await ResSt.input_name.set()
+
+    for admin in ADMINS():
+        try:
+            await dp.bot.send_message(chat_id=admin, text = f"{msg.from_user.get_mention(as_html=True)} to'lov cheki yubordi👇", disable_web_page_preview=True)
+            await sleep(0.3)
+            await msg.send_copy(chat_id=admin)
+            await sleep(0.3)
+        except Exception as err:
+            print(err)
 
 
 @dp.message_handler(state=ResSt.input_name)
@@ -30,7 +64,7 @@ async def resume_handler(message: types.Message, state:FSMContext):
 @dp.message_handler(state=ResSt.input_birth)
 async def resume_handler(message: types.Message, state:FSMContext):
     await state.update_data({'birth':message.text})
-    
+
     await message.answer(
         text = "3. Yashash joyingizni kiriting (viloyat, shahar).", reply_markup=cancel_btn)
     await ResSt.input_region.set()
@@ -73,7 +107,9 @@ async def resume_handler(message: types.Message, state:FSMContext):
     await message.answer(
         text = "7. Ish tajribangizni tavsiflab bering.\n\n\
 Ish tajribangizni qisqacha va to'g'ri tasvirlab bering.\n\
-Avval ishlagan joylaringizda sizning vazifangiz qanday bo'lganligi va qanday muvaffaqiyatlarga erishganingizni qisqacha tasvirlab berish juda muhimdir. Murakkab jumlalardan foydalanish shart emas. Hech bo'lmaganda, o'z so'zlaringiz bilan, nima qilolasiz, nima qildingiz, oldingi ish joyingizda nimani amalga oshirganingizni tasvirlab bering. Yutuqlaringiz haqida unutmang!", reply_markup=cancel_btn)
+Avval ishlagan joylaringizda sizning vazifangiz qanday bo'lganligi va qanday muvaffaqiyatlarga erishganingizni qisqacha tasvirlab berish juda muhimdir. \
+Murakkab jumlalardan foydalanish shart emas. Hech bo'lmaganda, o'z so'zlaringiz bilan, nima qilolasiz, nima qildingiz, oldingi ish joyingizda nimani amalga oshirganingizni tasvirlab bering. Yutuqlaringiz haqida unutmang!", 
+    reply_markup=cancel_btn)
     await ResSt.input_experience.set()
 
 
@@ -175,10 +211,11 @@ async def resume_handler(message: types.Message, state:FSMContext):
 @dp.message_handler(state=ResSt.confirm_cancel)
 async def resume_handler(message: types.Message, state:FSMContext):
     data = await state.get_data()
-    
+    entities = message.entities
+    user_id = message.from_user.id
+
     if message.text=='✅ Tasdiqlash':
-        try: 
-            text = f"#rezyume\n\n\
+        text = f"#rezyume\n\n\
 <b>👨‍💻 F. I. SH.:</b> {data['name']}\n\
 <b>🗓 Tug'ilgan yili:</b> {data['birth']}\n\
 <b>📌 Yashash joyi:</b> {data['region']}\n\
@@ -193,17 +230,29 @@ async def resume_handler(message: types.Message, state:FSMContext):
 <b>💼 Portfolio:</b> {data['portfolio']}\n\n\
 👉🏻 Kanalga obuna bo'lish\n\
 👨‍💻 @Halolishlar<a href='https://telegra.ph/file/7b99a6b7861774517d222.jpg'> </a>"
-            await dp.bot.send_message(chat_id=ADMINS[0], text = text, reply_markup=confirm_admin)
-            await sleep(0.3)
-            await message.answer(
-                text = f"✅ Qabul qilindi! E'loningiz admin tasdig'idan o'tgandan so'ng @Halolishlar kanalida chop etiladi.",
-                reply_markup=main_menu)
+
+        if db.get_one('avtopost') == 'aktiv':
+            try:
+                await dp.bot.send_message(chat_id=-1001363526370, text= text, entities=entities, parse_mode='HTML')
+                await message.answer('✅ Kanalga joylandi', reply_markup=main_menu)
+                db.add_ann('resume', avtopost=True)
+            except:
+                await message.answer('Bot kanalga admin qilinmagan! Adminga murojaat qiling.', reply_markup=main_menu)
+                await dp.bot.send_message(chat_id=ADMINS()[0], text = "Bot kanalga admin qilinmagan!")
+        else:
+            ann_id = db.add_ann('resume')
             await state.finish()
-        except:
-            pass
+            for admin in ADMINS():
+                try:
+                    await dp.bot.send_message(chat_id=admin, text = f"#rezyume\n\n<b>👨‍💻 F. I. SH.:</b> {data['name']}\n<b>🗓 Tug'ilgan yili:</b> {data['birth']}\n<b>📌 Yashash joyi:</b> {data['region']}\n<b>📄 Kasbi:</b> {data['position']}\n<b>📩 Aloqa:</b> {data['contact']}\n<b>💰 Ish haqi:</b> {data['salary']}\n<b>📈 Tajribasi:</b> {data['experience']}\n<b>🎓 O'qigan joylari:</b> {data['edu']}\n<b>📊 Kasbiy ko'nikmalari:</b> {data['skills']}\n<b>📋 Tavsiyalar:</b> {data['recommend']}\n<b>‼️ Qo'shimcha ma'lumot:</b> {data['additional']}\n<b>💼 Portfolio:</b> {data['portfolio']}\n\n👉🏻 Kanalga obuna bo'lish\n👨‍💻 @Halolishlar<a href='https://telegra.ph/file/7b99a6b7861774517d222.jpg'> </a>", reply_markup=confirm_admin(user_id, ann_id))
+                    await sleep(0.3)
+                except Exception as err:
+                    print(err)
+            await message.answer(text = f"✅ Qabul qilindi! E'loningiz admin tasdig'idan o'tgandan so'ng @Halolishlar kanalida chop etiladi.", reply_markup=main_menu)        
+
     elif message.text=='❌ Bekor qilish':
         await message.answer("❌ Bekor qilindi. Siz asosiy menyudasiz.", reply_markup=main_menu)
         await state.finish()        
     else:
-        await message.answer("Sizda yakunlanmagan elon joylashtirish holati mavjud. \
+        await message.answer("Sizda yakunlanmagan e'lon joylashtirish holati mavjud. \
 Yakunlash uchun quyidagilardan birini tanlang!", reply_markup=confrim_btn)
